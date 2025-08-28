@@ -1034,4 +1034,210 @@ export const definitions: DefinitionWithExtend[] = [
         description: "Zigbee relay switch",
         extend: [m.onOff()],
     },
+	{
+        fingerprint: [{modelID: 'TS0601', manufacturerName: '_TZE284_gt5al3bl'}],
+        model: 'GL-SPI-206P',
+        vendor: 'Gledopto',
+        description: 'Tuya SPI Pixel Controller RGBCCT/RGBW/RGB',
+        fromZigbee: [tz.tuya.fz.datapoints],
+        toZigbee: [
+            {
+                key: ['color', 'brightness'],
+                convertSet: async (entity, key, value, meta) => {
+                    const ep = meta.device.endpoints[0];
+                    const modeNow = meta.state?.work_mode;
+                    if (meta.state?.state !== 'ON') {
+                        await tz.tuya.sendDataPointBool(ep, 1, true);
+                    }
+                    if (modeNow !== 'colour') {
+                        await tz.tuya.sendDataPointEnum(ep, 2, 1); // 1=colour
+                    }
+                    if ('brightness' in meta.message) {
+                        const brightness = utils.toNumber(meta.message.brightness, 'brightness');
+                        const mapped = Math.round(utils.mapNumberRange(brightness, 0, 254, 10, 1000));
+                        const dp3 = Math.max(10, Math.min(1000, mapped));
+                        if (dp3 !== meta.state?.brightness) {
+                            await tz.tuya.sendDataPointValue(ep, 3, dp3);
+                        }
+                    }
+                    if ('color' in meta.message || key === 'color') {
+                        const colorData = meta.message.color ?? value;
+                        const c = libColor.Color.fromConverterArg(colorData);
+                        const hsv = c.isRGB() ? c.rgb.toHSV() : c.hsv;
+
+                        const h = Math.max(0, Math.min(360, Math.round(hsv.hue)));               // 0..360
+                        const sat1000 = Math.max(0, Math.min(1000, Math.round((hsv.saturation / 100) * 1000)));   // 0..1000
+                        const val1000 = 1000;                                                    // 
+                        const dp61Payload = [
+                            0x00,        
+                            0x01,        
+                            0x01,        
+                            0x14,        
+                            0x00,        
+                            (h >> 8) & 0xFF,      
+                            h & 0xFF,             
+                            (sat1000 >> 8) & 0xFF,
+                            sat1000 & 0xFF,       
+                            (val1000 >> 8) & 0xFF,
+                            val1000 & 0xFF        
+                        ];
+
+                        await tz.tuya.sendDataPointRaw(ep, 61, dp61Payload);
+                        
+                        return {state: {state: 'ON', work_mode: 'colour', color: colorData}};
+                    }
+
+                    return {state: {state: 'ON', work_mode: 'colour'}};
+                },
+            },
+            {
+                key: ['scene'],
+                convertSet: async (entity, key, value, meta) => {
+                    const ep = meta.device.endpoints[0];
+                    
+                    if (meta.state?.state !== 'ON') {
+                        await tz.tuya.sendDataPointBool(ep, 1, true);
+                    }
+
+                    if (meta.state?.work_mode !== 'scene') {
+                        await tz.tuya.sendDataPointEnum(ep, 2, 2); // 2=scene
+                    }
+
+                    const SCENE_DATA: {[key: string]: number[]} = {
+                        'ice_blue': [0x01, 0x15, 0x0a, 0x52, 0x52, 0xe0, 0x00, 0x00, 0x64, 0x00, 0xc1, 0x61, 0x00, 0xb4, 0x30, 0x00, 0xb5, 0x52, 0x00, 0xc4, 0x63],
+                        'glacier_express': [0x01, 0x16, 0x0a, 0x64, 0x64, 0x60, 0x00, 0x00, 0x64, 0x00, 0x92, 0x5f, 0x00, 0xc6, 0x60],
+                        'cloud_sea_sunset': [0x01, 0x17, 0x03, 0x5e, 0x5e, 0x60, 0x00, 0x00, 0x64, 0x00, 0x38, 0x2f, 0x00, 0x1e, 0x5c, 0x00, 0xd5, 0x45, 0x01, 0x1a, 0x64],
+                        'sea_flame': [0x01, 0x18, 0x02, 0x64, 0x64, 0xe0, 0x00, 0x00, 0x64, 0x00, 0xb2, 0x39, 0x01, 0x0a, 0x64, 0x01, 0x2d, 0x64, 0x01, 0x3f, 0x64],
+                        'firefly_night': [0x01, 0x1a, 0x03, 0x4b, 0x4b, 0xe0, 0x00, 0x00, 0x64, 0x00, 0xe0, 0x39, 0x01, 0x09, 0x53],
+                        'green_grass': [0x01, 0x1c, 0x0a, 0x5a, 0x5a, 0xe0, 0x00, 0x00, 0x52, 0x00, 0x9d, 0x64, 0x00, 0x8e, 0x64],
+                        'aurora': [0x01, 0x1d, 0x03, 0x52, 0x52, 0xe0, 0x00, 0x00, 0x64, 0x00, 0xae, 0x64, 0x00, 0xa6, 0x64, 0x00, 0xc1, 0x64, 0x00, 0xcc, 0x64],
+                        'late_autumn': [0x01, 0x1e, 0x0a, 0x52, 0x52, 0xe0, 0x00, 0x00, 0x64, 0x00, 0x19, 0x64, 0x00, 0x22, 0x5e, 0x00, 0x2c, 0x5b, 0x00, 0x14, 0x64, 0x00, 0x0c, 0x64],
+                        'game': [0x01, 0x1f, 0x02, 0x5f, 0x5f, 0x60, 0x00, 0x00, 0x64, 0x01, 0x10, 0x64, 0x00, 0xd2, 0x64, 0x00, 0xad, 0x64, 0x00, 0x8b, 0x64],
+                        'holiday': [0x01, 0x20, 0x0a, 0x55, 0x55, 0x60, 0x00, 0x00, 0x64, 0x00, 0xc2, 0x58, 0x01, 0x3e, 0x33, 0x00, 0xff, 0x46, 0x01, 0x1d, 0x64],
+                        'party': [0x01, 0x22, 0x04, 0x64, 0x64, 0x60, 0x00, 0x00, 0x64, 0x00, 0xd7, 0x5c, 0x00, 0xbc, 0x53, 0x00, 0x37, 0x1e, 0x00, 0x2c, 0x3f, 0x01, 0x61, 0x3f],
+                        'trend': [0x01, 0x23, 0x02, 0x64, 0x64, 0x60, 0x00, 0x00, 0x64, 0x01, 0x08, 0x4b, 0x00, 0xb1, 0x2f, 0x00, 0xcd, 0x57],
+                        'meditation': [0x01, 0x25, 0x03, 0x43, 0x43, 0x60, 0x00, 0x00, 0x64, 0x00, 0xb7, 0x35, 0x00, 0x9b, 0x54, 0x00, 0xcd, 0x61],
+                        'date': [0x01, 0x26, 0x01, 0x59, 0x59, 0xe0, 0x00, 0x00, 0x64, 0x01, 0x19, 0x47, 0x01, 0x49, 0x3d, 0x00, 0xcd, 0x61, 0x00, 0x26, 0x64],
+                        'valentine': [0x01, 0x2a, 0x01, 0x64, 0x64, 0x60, 0x00, 0x00, 0x64, 0x01, 0x15, 0x64, 0x01, 0x05, 0x64, 0x01, 0x45, 0x64, 0x01, 0x2f, 0x64],
+                        'neon_world': [0x01, 0x37, 0x0a, 0x5a, 0x5a, 0x60, 0x00, 0x00, 0x64, 0x00, 0x33, 0x58, 0x00, 0x18, 0x64, 0x01, 0x00, 0x45, 0x00, 0xe3, 0x5e, 0x00, 0xac, 0x30]
+                    };
+
+                    const sceneName = value;
+                    const sceneData = SCENE_DATA[sceneName];
+                    
+                    if (sceneData) {
+                        await tz.tuya.sendDataPointRaw(ep, 51, sceneData);
+                        return {state: {state: 'ON', work_mode: 'scene', scene: sceneName}};
+                    } else {
+                        throw new Error(`Unknown scene: ${sceneName}`);
+                    }
+                },
+            },
+            {
+                key: ['music_mode', 'music_sensitivity'],
+                convertSet: async (entity, key, value, meta) => {
+                    const ep = meta.device.endpoints[0];
+                    
+                    if (meta.state?.state !== 'ON') {
+                        await tz.tuya.sendDataPointBool(ep, 1, true);
+                    }
+
+                    if (meta.state?.work_mode !== 'music') {
+                        await tz.tuya.sendDataPointEnum(ep, 2, 3); // 3=music
+                    }
+
+                    const currentMusicMode = meta.state?.music_mode || 'rock';
+                    const currentSensitivity = meta.state?.music_sensitivity || 50;
+                    
+                    let musicMode = currentMusicMode;
+                    let sensitivity = currentSensitivity;
+                    
+                    if (key === 'music_mode') {
+                        musicMode = value;
+                    } else if (key === 'music_sensitivity') {
+                        sensitivity = value;
+                    }
+
+                    const MUSIC_DATA: {[key: string]: number[]} = {
+                        'rock': [0x01, 0x01, 0x00, 0x03, 0x64, 0x32, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0x64, 0x00, 0x78, 0x64, 0x00, 0xf0, 0x64, 0x00, 0x3c, 0x64, 0x00, 0xb4, 0x64, 0x01, 0x2c, 0x64, 0x00, 0x00, 0x00],
+                        'jazz': [0x01, 0x01, 0x00, 0x02, 0x64, 0x32, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0x50, 0x00, 0x78, 0x50, 0x00, 0xf0, 0x50, 0x00, 0x3c, 0x50, 0x00, 0xb4, 0x50, 0x01, 0x2c, 0x50, 0x00, 0x00, 0x00],
+                        'classic': [0x01, 0x01, 0x00, 0x12, 0x64, 0x32, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0x64, 0x00, 0x78, 0x64, 0x00, 0xf0, 0x64, 0x00, 0x3c, 0x64, 0x00, 0xb4, 0x64, 0x01, 0x2c, 0x64, 0x00, 0x00, 0x00],
+                        'rolling': [0x01, 0x01, 0x01, 0x12, 0x64, 0x32, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0x64, 0x00, 0x78, 0x64, 0x00, 0xf0, 0x64, 0x00, 0x3c, 0x64, 0x00, 0xb4, 0x64, 0x01, 0x2c, 0x64, 0x00, 0x00, 0x00],
+                        'energy': [0x01, 0x01, 0x02, 0x12, 0x64, 0x32, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0x64, 0x00, 0x78, 0x64, 0x00, 0xf0, 0x64, 0x00, 0x3c, 0x64, 0x00, 0xb4, 0x64, 0x01, 0x2c, 0x64, 0x00, 0x00, 0x00],
+                        'spectrum': [0x01, 0x01, 0x03, 0x12, 0x64, 0x32, 0x01, 0x00, 0x00, 0x64, 0x00, 0x00, 0x64, 0x00, 0x78, 0x64, 0x00, 0xf0, 0x64, 0x00, 0x3c, 0x64, 0x00, 0xb4, 0x64, 0x01, 0x2c, 0x64, 0x00, 0x00, 0x00]
+                    };
+
+                    const baseMusicData = MUSIC_DATA[musicMode];
+                    if (!baseMusicData) {
+                        throw new Error(`Unknown music mode: ${musicMode}`);
+                    }
+
+                    const dp52Payload = [...baseMusicData];
+                    dp52Payload[5] = Math.max(1, Math.min(100, sensitivity)); 
+
+                    await tz.tuya.sendDataPointRaw(ep, 52, dp52Payload);
+                    
+                    return {state: {state: 'ON', work_mode: 'music', music_mode: musicMode, music_sensitivity: sensitivity}};
+                },
+            },
+            tz.tuya.tz.datapoints
+        ],
+        onEvent: tz.tuya.onEventSetTime,
+        configure: tz.tuya.configureMagicPacket,
+        exposes: [
+            e.light_colorhs(),
+            e.numeric('brightness', ea.STATE_SET).withValueMin(0).withValueMax(1000),
+            e.numeric('color_temp', ea.STATE_SET).withValueMin(0).withValueMax(1000)
+                .withDescription('Color temperature (0=cold, 1000=warm)'),
+            e.enum('scene', ea.STATE_SET, [
+                'ice_blue', 'glacier_express', 'cloud_sea_sunset', 'sea_flame', 'firefly_night',
+                'green_grass', 'aurora', 'late_autumn', 'game', 'holiday', 'party', 'trend',
+                'meditation', 'date', 'valentine', 'neon_world'
+            ]).withDescription('Magic color scene selection'),
+            e.enum('music_mode', ea.STATE_SET, [
+                'rock', 'jazz', 'classic', 'rolling', 'energy', 'spectrum'
+            ]).withDescription('Music rhythm mode selection'),
+            e.numeric('music_sensitivity', ea.STATE_SET).withValueMin(1).withValueMax(100)
+                .withDescription('Music rhythm sensitivity (1-100)'),
+            tz.tuya.exposes.countdown(),
+            e.binary('do_not_disturb', ea.STATE_SET, 'ON', 'OFF'),
+            e.enum('light_bead_sequence', ea.STATE_SET, [
+                'RGB','RBG','GRB','GBR','BRG','BGR',
+                'RGBW','RBGW','GRBW','GBRW','BRGW','BGRW',
+                'WRGB','WRBG','WGRB','WGBR','WBRG','WBGR',
+            ]),
+            e.enum('chip_type', ea.STATE_SET, [
+                'WS2801','LPD6803','LPD8803','WS2811','TM1814B','TM1934A',
+                'SK6812','SK9822','UCS8904B','WS2805',
+            ]),
+            e.numeric('lightpixel_number_set', ea.STATE_SET).withValueMin(10).withValueMax(1000),
+            e.enum('work_mode', ea.STATE_SET, ['white','colour','scene','music']),
+        ],
+        meta: {
+            tuyaDatapoints: [
+                [1, 'state', tz.tuya.valueConverter.onOff],
+                [2, 'work_mode', tz.tuya.valueConverterBasic.lookup({
+                    white: tz.tuya.enum(0), colour: tz.tuya.enum(1), scene: tz.tuya.enum(2), music: tz.tuya.enum(3),
+                })],
+                [3, 'brightness', tz.tuya.valueConverter.scale0_254to0_1000],
+                [4, 'color_temp', tz.tuya.valueConverter.raw],
+                [7, 'countdown', tz.tuya.valueConverter.countdown],
+                [53, 'lightpixel_number_set', tz.tuya.valueConverter.raw],
+                [101, 'light_bead_sequence', tz.tuya.valueConverterBasic.lookup({
+                    RGB: tz.tuya.enum(0), RBG: tz.tuya.enum(1), GRB: tz.tuya.enum(2), GBR: tz.tuya.enum(3),
+                    BRG: tz.tuya.enum(4), BGR: tz.tuya.enum(5), RGBW: tz.tuya.enum(6), RBGW: tz.tuya.enum(7),
+                    GRBW: tz.tuya.enum(8), GBRW: tz.tuya.enum(9), BRGW: tz.tuya.enum(10), BGRW: tz.tuya.enum(11),
+                    WRGB: tz.tuya.enum(12), WRBG: tz.tuya.enum(13), WGRB: tz.tuya.enum(14), WGBR: tz.tuya.enum(15),
+                    WBRG: tz.tuya.enum(16), WBGR: tz.tuya.enum(17),
+                })],
+                [102, 'chip_type', tz.tuya.valueConverterBasic.lookup({
+                    WS2801: tz.tuya.enum(0), LPD6803: tz.tuya.enum(1), LPD8803: tz.tuya.enum(2), WS2811: tz.tuya.enum(3),
+                    TM1814B: tz.tuya.enum(4), TM1934A: tz.tuya.enum(5), SK6812: tz.tuya.enum(6), SK9822: tz.tuya.enum(7),
+                    UCS8904B: tz.tuya.enum(8), WS2805: tz.tuya.enum(9),
+                })],
+                [103, 'do_not_disturb', tz.tuya.valueConverter.onOff],
+            ],
+        },
+        options: [],
+    },
 ];
